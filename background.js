@@ -18,12 +18,16 @@ chrome.action.onClicked.addListener(async (tab) => {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: (val) => {
+        // events from mouse, keyboard to website
         const events = [
           "click",
           "mousedown",
           "mouseup",
           "touchstart",
           "touchend",
+          "keydown",
+          "keypress",
+          "keyup",
         ];
 
         if (val === "on") {
