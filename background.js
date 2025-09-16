@@ -16,7 +16,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 
     // Inject script to toggle designMode and editing behavior
     await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId: tab.id, allFrames: true },
       func: (val) => {
         // events from mouse, keyboard to website
         const events = [
@@ -33,12 +33,70 @@ chrome.action.onClicked.addListener(async (tab) => {
         if (val === "on") {
           document.designMode = "on";
 
-          // Save original contentEditable state
-          window.__editableBackup = new WeakMap();
-          document.querySelectorAll("*").forEach((el) => {
-            window.__editableBackup.set(el, el.contentEditable);
-            el.contentEditable = "true";
-          });
+          // Central backup store for this page while edit mode is ON
+          window.__editToggleState = {
+            editableBackup: new WeakMap(),
+            attrBackup: new WeakMap(),
+            styleBackup: new WeakMap(),
+          };
+
+          // Helper: apply to element and optionally its shadow tree
+          const traverse = (root) => {
+            const all = root.querySelectorAll("*");
+            all.forEach((el) => {
+              // Backup and force contentEditable
+              window.__editToggleState.editableBackup.set(
+                el,
+                el.contentEditable
+              );
+              el.contentEditable = "true";
+
+              // For form controls: remove readonly/disabled while ON
+              if (
+                el instanceof HTMLInputElement ||
+                el instanceof HTMLTextAreaElement ||
+                el instanceof HTMLSelectElement
+              ) {
+                const backup = {
+                  readOnly: /** @type {any} */ (el).readOnly ?? false,
+                  disabled: el.disabled ?? false,
+                };
+                window.__editToggleState.attrBackup.set(el, backup);
+                // Enable editing
+                if ("readOnly" in el) {
+                  /** @type {any} */ (el).readOnly = false;
+                }
+                el.disabled = false;
+              }
+
+              // Temporarily remove inert attribute (blocks interaction)
+              if (el.hasAttribute && el.hasAttribute("inert")) {
+                const inertBackup =
+                  window.__editToggleState.attrBackup.get(el) || {};
+                inertBackup.inert = true;
+                window.__editToggleState.attrBackup.set(el, inertBackup);
+                el.removeAttribute("inert");
+              }
+
+              // Ensure text selection and pointer events are enabled
+              const styleBackup = {
+                userSelect: el.style.userSelect,
+                webkitUserSelect: el.style.webkitUserSelect,
+                pointerEvents: el.style.pointerEvents,
+              };
+              window.__editToggleState.styleBackup.set(el, styleBackup);
+              el.style.userSelect = "text";
+              el.style.webkitUserSelect = "text";
+              el.style.pointerEvents = "auto";
+
+              // Recurse into shadow DOM if present
+              if (el.shadowRoot) {
+                traverse(el.shadowRoot);
+              }
+            });
+          };
+
+          traverse(document);
 
           // Block user interaction events
           window.__blockEventHandlers = [];
@@ -50,17 +108,54 @@ chrome.action.onClicked.addListener(async (tab) => {
         } else {
           document.designMode = "off";
 
-          // Restore original contentEditable state
-          if (window.__editableBackup) {
-            document.querySelectorAll("*").forEach((el) => {
-              const original = window.__editableBackup.get(el);
-              if (original !== undefined) {
-                el.contentEditable = original;
-              } else {
-                el.removeAttribute("contentEditable");
+          // Restore original states
+          const restoreTree = (root) => {
+            const all = root.querySelectorAll("*");
+            all.forEach((el) => {
+              // Restore contentEditable
+              if (window.__editToggleState?.editableBackup) {
+                const original =
+                  window.__editToggleState.editableBackup.get(el);
+                if (original !== undefined) {
+                  el.contentEditable = original;
+                } else {
+                  el.removeAttribute("contentEditable");
+                }
+              }
+
+              // Restore readonly/disabled for form controls
+              if (window.__editToggleState?.attrBackup) {
+                const attr = window.__editToggleState.attrBackup.get(el);
+                if (attr) {
+                  if ("readOnly" in el) {
+                    /** @type {any} */ (el).readOnly = attr.readOnly;
+                  }
+                  el.disabled = attr.disabled;
+                  if (attr.inert) {
+                    el.setAttribute("inert", "");
+                  }
+                }
+              }
+
+              // Restore styles
+              if (window.__editToggleState?.styleBackup) {
+                const styleB = window.__editToggleState.styleBackup.get(el);
+                if (styleB) {
+                  el.style.userSelect = styleB.userSelect;
+                  el.style.webkitUserSelect = styleB.webkitUserSelect;
+                  el.style.pointerEvents = styleB.pointerEvents;
+                }
+              }
+
+              // Shadow DOM restore
+              if (el.shadowRoot) {
+                restoreTree(el.shadowRoot);
               }
             });
-          }
+          };
+
+          restoreTree(document);
+          window.__editToggleState = undefined;
 
           // Unbind blocked events
           if (window.__blockEventHandlers) {
