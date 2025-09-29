@@ -44,6 +44,20 @@ chrome.action.onClicked.addListener(async (tab) => {
           const traverse = (root) => {
             const all = root.querySelectorAll("*");
             all.forEach((el) => {
+              // Disable overlay Telegram
+              if (
+                el.classList &&
+                (el.classList.contains("AN8wkEiR") ||
+                  el.classList.contains("RMsQzedH"))
+              ) {
+                // Backup style inline
+                const overlayBackup = {
+                  display: el.style.display,
+                  important: el.getAttribute("style"),
+                };
+                window.__editToggleState.styleBackup.set(el, overlayBackup);
+                el.style.setProperty("display", "none", "important");
+              }
               // Backup and force contentEditable
               window.__editToggleState.editableBackup.set(
                 el,
@@ -144,6 +158,20 @@ chrome.action.onClicked.addListener(async (tab) => {
                   el.style.userSelect = styleB.userSelect;
                   el.style.webkitUserSelect = styleB.webkitUserSelect;
                   el.style.pointerEvents = styleB.pointerEvents;
+
+                  // Restore overlay Telegram
+                  if (
+                    el.classList &&
+                    (el.classList.contains("AN8wkEiR") ||
+                      el.classList.contains("RMsQzedH"))
+                  ) {
+                    el.style.display = styleB.display;
+                    if (styleB.important) {
+                      el.setAttribute("style", styleB.important);
+                    } else {
+                      el.removeAttribute("style");
+                    }
+                  }
                 }
               }
 
